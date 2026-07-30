@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #faf9f7;
+  color: #141414;
+}
+
+.stat-card {
+  @apply rounded-xl border border-black/10 bg-white p-5 shadow-sm;
+}
+
+.table-shell {
+  @apply w-full overflow-hidden rounded-xl border border-black/10 bg-white;
+}
+
+.table-shell table {
+  @apply w-full text-sm;
+}
+
+.table-shell th {
+  @apply bg-black/[0.03] px-4 py-2 text-left font-medium text-black/60;
+}
+
+.table-shell td {
+  @apply border-t border-black/5 px-4 py-2;
+}
+
+.badge {
+  @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+}
