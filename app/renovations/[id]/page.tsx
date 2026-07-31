@@ -56,6 +56,34 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
     revalidatePath(`/renovations/${projectId}`);
   }
 
+  async function uploadLineItemInvoice(formData: FormData) {
+    "use server";
+    const supabase = createClient();
+    const file = formData.get("file") as File;
+    if (!file || file.size === 0) return;
+    const lineItemId = formData.get("line_item_id") as string;
+    const path = `${projectId}/line-items/${lineItemId}-${Date.now()}-${file.name}`;
+    const { error: uploadError } = await supabase.storage.from("renovation-docs").upload(path, file);
+    if (uploadError) return;
+    const { data: publicUrl } = supabase.storage.from("renovation-docs").getPublicUrl(path);
+    await supabase.from("renovation_documents").insert({
+      project_id: projectId,
+      line_item_id: lineItemId,
+      doc_type: "invoice",
+      file_url: publicUrl.publicUrl,
+      file_name: file.name,
+      caption: formData.get("caption") || null,
+    });
+    revalidatePath(`/renovations/${projectId}`);
+  }
+
+  async function deleteLineItemDocument(formData: FormData) {
+    "use server";
+    const supabase = createClient();
+    await supabase.from("renovation_documents").delete().eq("id", formData.get("document_id"));
+    revalidatePath(`/renovations/${projectId}`);
+  }
+
   async function addBid(formData: FormData) {
     "use server";
     const supabase = createClient();
@@ -420,8 +448,11 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
         lineItems={(lineItems ?? []) as any}
         contractors={(contractors ?? []) as any}
         bids={(bids ?? []) as any}
+        documents={(documents ?? []) as any}
         updateLineItemDetails={updateLineItemDetails}
         acceptBid={acceptBid}
+        uploadLineItemInvoice={uploadLineItemInvoice}
+        deleteLineItemDocument={deleteLineItemDocument}
       />
 
       <h3 className="mb-2 text-sm font-medium text-black/70">Add a bid to a line item</h3>

@@ -31,6 +31,15 @@ interface Bid {
   contractors?: { company_name: string };
 }
 
+interface LineItemDocument {
+  id: string;
+  line_item_id: string | null;
+  doc_type: string;
+  file_url: string;
+  file_name: string | null;
+  caption: string | null;
+}
+
 // Same palette used on the schedule Gantt chart, so a category reads as the
 // same color everywhere in the app.
 const CATEGORY_PALETTE = [
@@ -81,14 +90,20 @@ export default function LineItemsTable({
   lineItems,
   contractors,
   bids,
+  documents,
   updateLineItemDetails,
   acceptBid,
+  uploadLineItemInvoice,
+  deleteLineItemDocument,
 }: {
   lineItems: LineItem[];
   contractors: Contractor[];
   bids: Bid[];
+  documents: LineItemDocument[];
   updateLineItemDetails: (formData: FormData) => void;
   acceptBid: (formData: FormData) => void;
+  uploadLineItemInvoice: (formData: FormData) => void;
+  deleteLineItemDocument: (formData: FormData) => void;
 }) {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   // Categories explicitly unchecked by the user — empty set means "show all".
@@ -120,6 +135,17 @@ export default function LineItemsTable({
     });
     return m;
   }, [bids]);
+
+  const documentsByLineItem = useMemo(() => {
+    const m = new Map<string, LineItemDocument[]>();
+    documents.forEach((d) => {
+      if (!d.line_item_id) return;
+      const arr = m.get(d.line_item_id) ?? [];
+      arr.push(d);
+      m.set(d.line_item_id, arr);
+    });
+    return m;
+  }, [documents]);
 
   function setFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
     setFilters((f) => ({ ...f, [key]: value }));
@@ -278,6 +304,7 @@ export default function LineItemsTable({
             {filtered.map((li) => {
               const itemOver = Number(li.actual_amount) > Number(li.budgeted_amount) && Number(li.budgeted_amount) > 0;
               const itemBids = bidsByLineItem.get(li.id) ?? [];
+              const itemDocs = documentsByLineItem.get(li.id) ?? [];
               const catColor = colorByCategory.get(li.category) ?? "#64748b";
               return (
                 <>
@@ -297,7 +324,7 @@ export default function LineItemsTable({
                     <td>{li.payment_method ?? "—"}</td>
                     <td>{li.paid_by ?? "—"}</td>
                     <td className="text-xs text-black/60">{li.notes ?? "—"}</td>
-                    <td></td>
+                    <td className="text-xs text-black/40">{itemDocs.length > 0 ? `📎 ${itemDocs.length}` : ""}</td>
                   </tr>
                   <tr key={li.id + "-edit"}>
                     <td colSpan={10} className="bg-black/[0.02] px-4 py-2">
@@ -325,6 +352,39 @@ export default function LineItemsTable({
                           <input name="notes" defaultValue={li.notes ?? ""} placeholder="Notes" className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm" />
                           <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Save changes</button>
                         </form>
+                      </details>
+                    </td>
+                  </tr>
+                  <tr key={li.id + "-invoices"}>
+                    <td colSpan={10} className="bg-black/[0.02] px-4 py-2">
+                      <details>
+                        <summary className="cursor-pointer text-xs text-accent underline">
+                          Invoices {itemDocs.length > 0 ? `(${itemDocs.length})` : ""}
+                        </summary>
+                        <div className="mt-3 flex flex-col gap-3">
+                          {itemDocs.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {itemDocs.map((d) => (
+                                <div key={d.id} className="flex items-center gap-2 rounded-lg border border-black/10 bg-white px-3 py-1.5 text-xs">
+                                  <a href={d.file_url} target="_blank" rel="noopener noreferrer" className="text-accent underline">
+                                    📎 {d.file_name ?? "View file"}
+                                  </a>
+                                  {d.caption && <span className="text-black/40">— {d.caption}</span>}
+                                  <form action={deleteLineItemDocument}>
+                                    <input type="hidden" name="document_id" value={d.id} />
+                                    <button type="submit" className="text-black/40 underline hover:text-red-700">Remove</button>
+                                  </form>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <form action={uploadLineItemInvoice} className="flex flex-wrap items-center gap-2">
+                            <input type="hidden" name="line_item_id" value={li.id} />
+                            <input name="file" type="file" accept="image/*,.pdf" required className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+                            <input name="caption" placeholder="Caption (optional)" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+                            <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Upload invoice</button>
+                          </form>
+                        </div>
                       </details>
                     </td>
                   </tr>
