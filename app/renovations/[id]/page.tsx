@@ -390,11 +390,12 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
                 <td>
                   <form action={updateTaskStatus} className="flex items-center gap-2">
                     <input type="hidden" name="task_id" value={t.id} />
-                    <select name="status" defaultValue={t.status} onChange={(e) => e.currentTarget.form?.requestSubmit()} className="rounded-lg border border-black/15 px-2 py-1 text-xs">
+                    <select name="status" defaultValue={t.status} className="rounded-lg border border-black/15 px-2 py-1 text-xs">
                       <option value="todo">To do</option>
                       <option value="in_progress">In progress</option>
                       <option value="done">Done</option>
                     </select>
+                    <button type="submit" className="text-xs text-accent underline">Update</button>
                   </form>
                 </td>
               </tr>
