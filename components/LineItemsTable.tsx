@@ -154,7 +154,7 @@ export default function LineItemsTable({
       if (filters.notes && !(li.notes ?? "").toLowerCase().includes(filters.notes.toLowerCase())) return false;
       return true;
     });
-  }, [lineItems, filters]);
+  }, [lineItems, filters, hiddenCategories]);
 
   const filteredTotal = filtered.reduce((s, li) => s + Number(li.actual_amount ?? 0), 0);
   const filtersActive = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS) || hiddenCategories.size > 0;
