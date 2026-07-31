@@ -162,6 +162,7 @@ create table renovation_line_items (
   vendor text,
   payment_method text,
   paid_by text, -- investor/payer name, free text (not necessarily a system user)
+  notes text,
   created_at timestamptz not null default now()
 );
 
