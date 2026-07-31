@@ -18,10 +18,14 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
     const supabase = createClient();
     await supabase.from("renovation_line_items").insert({
       project_id: projectId,
+      expense_date: formData.get("expense_date") || null,
       category: formData.get("category"),
+      vendor: formData.get("vendor") || null,
       description: formData.get("description") || null,
       budgeted_amount: formData.get("budgeted_amount") || 0,
       actual_amount: formData.get("actual_amount") || 0,
+      payment_method: formData.get("payment_method") || null,
+      paid_by: formData.get("paid_by") || null,
       contractor_id: formData.get("contractor_id") || null,
     });
     revalidatePath(`/renovations/${projectId}`);
@@ -376,21 +380,26 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
 
       {/* LINE ITEMS */}
       <h2 className="mb-2 text-lg font-medium">Budget line items</h2>
+      <p className="mb-2 text-xs text-black/50">Tracked as an expense log — one row per payment (date, vendor, amount, payment method, who paid). Budgeted $ is optional and only used for category-level bid comparisons below.</p>
       <form action={addLineItem} className="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-black/10 bg-white p-5 md:grid-cols-6">
-        <input name="category" placeholder="Category (e.g. Kitchen)" required className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <input name="expense_date" type="date" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <input name="category" placeholder="Category (e.g. Construction)" required className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <input name="vendor" placeholder="Vendor" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
         <input name="description" placeholder="Description" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-        <input name="budgeted_amount" type="number" placeholder="Budgeted $" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-        <input name="actual_amount" type="number" placeholder="Actual $" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <input name="budgeted_amount" type="number" placeholder="Budgeted $ (optional)" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <input name="actual_amount" type="number" placeholder="Amount $" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <input name="payment_method" placeholder="Payment method" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <input name="paid_by" placeholder="Paid by" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
         <select name="contractor_id" className="rounded-lg border border-black/15 px-3 py-2 text-sm">
-          <option value="">Contractor...</option>
+          <option value="">Contractor (optional)...</option>
           {(contractors ?? []).map((c) => <option key={c.id} value={c.id}>{c.company_name}</option>)}
         </select>
-        <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Add line item</button>
+        <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Add expense</button>
       </form>
 
       <div className="mb-8 table-shell">
         <table>
-          <thead><tr><th>Category</th><th>Description</th><th>Contractor</th><th>Budgeted</th><th>Actual</th><th>Status</th></tr></thead>
+          <thead><tr><th>Date</th><th>Category</th><th>Vendor</th><th>Description</th><th>Budgeted</th><th>Amount</th><th>Payment method</th><th>Paid by</th><th>Contractor</th><th>Status</th></tr></thead>
           <tbody>
             {(lineItems ?? []).map((li: any) => {
               const itemOver = Number(li.actual_amount) > Number(li.budgeted_amount) && Number(li.budgeted_amount) > 0;
@@ -398,16 +407,20 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
               return (
                 <>
                   <tr key={li.id}>
+                    <td>{li.expense_date ?? "—"}</td>
                     <td>{li.category}</td>
+                    <td>{li.vendor ?? "—"}</td>
                     <td>{li.description ?? "—"}</td>
-                    <td>{li.contractors?.company_name ?? "—"}</td>
-                    <td>{money(li.budgeted_amount)}</td>
+                    <td>{li.budgeted_amount > 0 ? money(li.budgeted_amount) : "—"}</td>
                     <td className={itemOver ? "font-medium text-red-700" : ""}>{money(li.actual_amount)}</td>
+                    <td>{li.payment_method ?? "—"}</td>
+                    <td>{li.paid_by ?? "—"}</td>
+                    <td>{li.contractors?.company_name ?? "—"}</td>
                     <td><span className="badge bg-black/5">{li.status}</span></td>
                   </tr>
                   {itemBids.length > 0 && (
                     <tr key={li.id + "-bids"}>
-                      <td colSpan={6} className="bg-black/[0.02] px-4 py-2">
+                      <td colSpan={10} className="bg-black/[0.02] px-4 py-2">
                         <div className="mb-1 text-xs font-medium text-black/50">Bids for {li.category}</div>
                         <div className="flex flex-wrap gap-2">
                           {itemBids.map((b: any) => (
@@ -432,7 +445,7 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
                 </>
               );
             })}
-            {(!lineItems || lineItems.length === 0) && <tr><td colSpan={6} className="py-6 text-center text-black/40">No line items yet.</td></tr>}
+            {(!lineItems || lineItems.length === 0) && <tr><td colSpan={10} className="py-6 text-center text-black/40">No line items yet.</td></tr>}
           </tbody>
         </table>
       </div>

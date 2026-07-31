@@ -154,6 +154,14 @@ create table renovation_line_items (
   contractor_id uuid references contractors(id),
   status text not null default 'not_started'
     check (status in ('not_started', 'in_progress', 'complete')),
+  -- Ledger-style fields, matching an owner's expense-tracking spreadsheet
+  -- (date incurred, who was paid, how, and who funded it) so real expense
+  -- logs can be imported/entered row-by-row alongside the budget-vs-actual
+  -- category rows above.
+  expense_date date,
+  vendor text,
+  payment_method text,
+  paid_by text, -- investor/payer name, free text (not necessarily a system user)
   created_at timestamptz not null default now()
 );
 
