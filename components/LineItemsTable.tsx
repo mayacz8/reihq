@@ -52,7 +52,6 @@ function money(n: number | null | undefined) {
 type Filters = {
   dateFrom: string;
   dateTo: string;
-  category: string;
   vendor: string;
   description: string;
   budgetMin: string;
@@ -67,7 +66,6 @@ type Filters = {
 const EMPTY_FILTERS: Filters = {
   dateFrom: "",
   dateTo: "",
-  category: "",
   vendor: "",
   description: "",
   budgetMin: "",
@@ -93,6 +91,8 @@ export default function LineItemsTable({
   acceptBid: (formData: FormData) => void;
 }) {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  // Categories explicitly unchecked by the user — empty set means "show all".
+  const [hiddenCategories, setHiddenCategories] = useState<Set<string>>(new Set());
 
   const categories = useMemo(
     () => Array.from(new Set(lineItems.map((li) => li.category))).sort(),
@@ -125,11 +125,20 @@ export default function LineItemsTable({
     setFilters((f) => ({ ...f, [key]: value }));
   }
 
+  function toggleCategory(cat: string) {
+    setHiddenCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  }
+
   const filtered = useMemo(() => {
     return lineItems.filter((li) => {
+      if (hiddenCategories.has(li.category)) return false;
       if (filters.dateFrom && (!li.expense_date || li.expense_date < filters.dateFrom)) return false;
       if (filters.dateTo && (!li.expense_date || li.expense_date > filters.dateTo)) return false;
-      if (filters.category && li.category !== filters.category) return false;
       if (filters.vendor && !(li.vendor ?? "").toLowerCase().includes(filters.vendor.toLowerCase())) return false;
       if (
         filters.description &&
@@ -148,27 +157,43 @@ export default function LineItemsTable({
   }, [lineItems, filters]);
 
   const filteredTotal = filtered.reduce((s, li) => s + Number(li.actual_amount ?? 0), 0);
-  const filtersActive = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS);
+  const filtersActive = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS) || hiddenCategories.size > 0;
 
   const inputCls = "w-full rounded-md border border-black/10 bg-black/[0.02] px-2 py-1 text-xs";
 
   return (
     <div>
       {categories.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-3 pl-1">
-          {categories.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setFilter("category", filters.category === c ? "" : c)}
-              className={`flex items-center gap-1.5 text-xs ${
-                filters.category === c ? "font-semibold text-black" : "text-black/60"
-              }`}
-            >
-              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorByCategory.get(c) }} />
-              {c}
-            </button>
-          ))}
+        <div className="mb-3 rounded-xl border border-black/10 bg-white p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-medium text-black/50">Show categories:</span>
+            <div className="flex gap-3 text-xs">
+              <button type="button" onClick={() => setHiddenCategories(new Set())} className="text-accent underline">
+                Show all
+              </button>
+              <button
+                type="button"
+                onClick={() => setHiddenCategories(new Set(categories))}
+                className="text-accent underline"
+              >
+                Hide all
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+            {categories.map((c) => (
+              <label key={c} className="flex cursor-pointer items-center gap-1.5 text-xs">
+                <input
+                  type="checkbox"
+                  checked={!hiddenCategories.has(c)}
+                  onChange={() => toggleCategory(c)}
+                  className="h-3.5 w-3.5 accent-black/70"
+                />
+                <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorByCategory.get(c) }} />
+                <span className={hiddenCategories.has(c) ? "text-black/40" : "text-black/70"}>{c}</span>
+              </label>
+            ))}
+          </div>
         </div>
       )}
 
@@ -179,7 +204,10 @@ export default function LineItemsTable({
         {filtersActive && (
           <button
             type="button"
-            onClick={() => setFilters(EMPTY_FILTERS)}
+            onClick={() => {
+              setFilters(EMPTY_FILTERS);
+              setHiddenCategories(new Set());
+            }}
             className="text-xs text-accent underline"
           >
             Clear filters
@@ -209,12 +237,7 @@ export default function LineItemsTable({
                   <input type="date" value={filters.dateTo} onChange={(e) => setFilter("dateTo", e.target.value)} className={inputCls} />
                 </div>
               </th>
-              <th className="p-1">
-                <select value={filters.category} onChange={(e) => setFilter("category", e.target.value)} className={inputCls}>
-                  <option value="">All</option>
-                  {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </th>
+              <th className="p-1 text-center text-[10px] text-black/30">see above</th>
               <th className="p-1">
                 <input placeholder="Search…" value={filters.vendor} onChange={(e) => setFilter("vendor", e.target.value)} className={inputCls} />
               </th>
