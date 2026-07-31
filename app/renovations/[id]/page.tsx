@@ -144,6 +144,32 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
     revalidatePath(`/renovations/${projectId}`);
   }
 
+  async function updateTaskDetails(formData: FormData) {
+    "use server";
+    const supabase = createClient();
+    const taskId = formData.get("task_id") as string;
+    const dependsOn = (formData.getAll("depends_on") as string[]).filter(Boolean);
+    await supabase
+      .from("renovation_tasks")
+      .update({
+        title: formData.get("title"),
+        category: formData.get("category") || "General",
+        assigned_contractor_id: formData.get("assigned_contractor_id") || null,
+        start_date: formData.get("start_date") || null,
+        due_date: formData.get("due_date") || null,
+        notes: formData.get("notes") || null,
+      })
+      .eq("id", taskId);
+    // Replace this item's dependencies with whatever is currently checked.
+    await supabase.from("task_dependencies").delete().eq("task_id", taskId);
+    if (dependsOn.length > 0) {
+      await supabase.from("task_dependencies").insert(
+        dependsOn.map((depId) => ({ task_id: taskId, depends_on_task_id: depId }))
+      );
+    }
+    revalidatePath(`/renovations/${projectId}`);
+  }
+
   async function addPermit(formData: FormData) {
     "use server";
     const supabase = createClient();
@@ -484,26 +510,51 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
           <tbody>
             {punchListTasks.map((t: any) => {
               const deps = (depsByTask.get(t.id) ?? []).map((depId) => taskById.get(depId)?.title).filter(Boolean);
+              const currentDeps = depsByTask.get(t.id) ?? [];
               return (
-                <tr key={t.id}>
-                  <td>{t.title}</td>
-                  <td><span className="badge bg-black/5">{t.category || "General"}</span></td>
-                  <td>{t.contractors?.company_name ?? "—"}</td>
-                  <td>{t.start_date ?? "—"}</td>
-                  <td>{t.due_date ?? "—"}</td>
-                  <td className="text-xs text-black/50">{deps.length > 0 ? deps.join(", ") : "—"}</td>
-                  <td>
-                    <form action={updateTaskStatus} className="flex items-center gap-2">
-                      <input type="hidden" name="task_id" value={t.id} />
-                      <select name="status" defaultValue={t.status} className="rounded-lg border border-black/15 px-2 py-1 text-xs">
-                        <option value="todo">To do</option>
-                        <option value="in_progress">In progress</option>
-                        <option value="done">Done</option>
-                      </select>
-                      <button type="submit" className="text-xs text-accent underline">Update</button>
-                    </form>
-                  </td>
-                </tr>
+                <>
+                  <tr key={t.id}>
+                    <td>{t.title}</td>
+                    <td><span className="badge bg-black/5">{t.category || "General"}</span></td>
+                    <td>{t.contractors?.company_name ?? "—"}</td>
+                    <td>{t.start_date ?? "—"}</td>
+                    <td>{t.due_date ?? "—"}</td>
+                    <td className="text-xs text-black/50">{deps.length > 0 ? deps.join(", ") : "—"}</td>
+                    <td>
+                      <form action={updateTaskStatus} className="flex items-center gap-2">
+                        <input type="hidden" name="task_id" value={t.id} />
+                        <select name="status" defaultValue={t.status} className="rounded-lg border border-black/15 px-2 py-1 text-xs">
+                          <option value="todo">To do</option>
+                          <option value="in_progress">In progress</option>
+                          <option value="done">Done</option>
+                        </select>
+                        <button type="submit" className="text-xs text-accent underline">Update</button>
+                      </form>
+                    </td>
+                  </tr>
+                  <tr key={t.id + "-edit"}>
+                    <td colSpan={7} className="bg-black/[0.02] px-4 py-2">
+                      <details>
+                        <summary className="cursor-pointer text-xs text-accent underline">Edit</summary>
+                        <form action={updateTaskDetails} className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-6">
+                          <input type="hidden" name="task_id" value={t.id} />
+                          <input name="title" defaultValue={t.title} required className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm" />
+                          <input name="category" defaultValue={t.category || "General"} className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+                          <select name="assigned_contractor_id" defaultValue={t.assigned_contractor_id ?? ""} className="rounded-lg border border-black/15 px-3 py-2 text-sm">
+                            <option value="">Contractor...</option>
+                            {(contractors ?? []).map((c) => <option key={c.id} value={c.id}>{c.company_name}</option>)}
+                          </select>
+                          <input name="start_date" type="date" defaultValue={t.start_date ?? ""} className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+                          <input name="due_date" type="date" defaultValue={t.due_date ?? ""} className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+                          <select name="depends_on" multiple defaultValue={currentDeps} className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm md:col-span-2" size={Math.min(4, Math.max(2, dependencyOptions.length))}>
+                            {dependencyOptions.filter((o) => o.id !== t.id).map((o) => <option key={o.id} value={o.id}>Depends on: {o.label}</option>)}
+                          </select>
+                          <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Save changes</button>
+                        </form>
+                      </details>
+                    </td>
+                  </tr>
+                </>
               );
             })}
             {punchListTasks.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-black/40">No tasks yet.</td></tr>}
@@ -535,26 +586,51 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
           <tbody>
             {scheduleItems.map((t: any) => {
               const deps = (depsByTask.get(t.id) ?? []).map((depId) => taskById.get(depId)?.title).filter(Boolean);
+              const currentDeps = depsByTask.get(t.id) ?? [];
               return (
-                <tr key={t.id}>
-                  <td>{t.title}</td>
-                  <td><span className="badge bg-black/5">{t.category || "General"}</span></td>
-                  <td>{t.contractors?.company_name ?? "—"}</td>
-                  <td>{t.start_date ?? "—"}</td>
-                  <td>{t.due_date ?? "—"}</td>
-                  <td className="text-xs text-black/50">{deps.length > 0 ? deps.join(", ") : "—"}</td>
-                  <td>
-                    <form action={updateTaskStatus} className="flex items-center gap-2">
-                      <input type="hidden" name="task_id" value={t.id} />
-                      <select name="status" defaultValue={t.status} className="rounded-lg border border-black/15 px-2 py-1 text-xs">
-                        <option value="todo">To do</option>
-                        <option value="in_progress">In progress</option>
-                        <option value="done">Done</option>
-                      </select>
-                      <button type="submit" className="text-xs text-accent underline">Update</button>
-                    </form>
-                  </td>
-                </tr>
+                <>
+                  <tr key={t.id}>
+                    <td>{t.title}</td>
+                    <td><span className="badge bg-black/5">{t.category || "General"}</span></td>
+                    <td>{t.contractors?.company_name ?? "—"}</td>
+                    <td>{t.start_date ?? "—"}</td>
+                    <td>{t.due_date ?? "—"}</td>
+                    <td className="text-xs text-black/50">{deps.length > 0 ? deps.join(", ") : "—"}</td>
+                    <td>
+                      <form action={updateTaskStatus} className="flex items-center gap-2">
+                        <input type="hidden" name="task_id" value={t.id} />
+                        <select name="status" defaultValue={t.status} className="rounded-lg border border-black/15 px-2 py-1 text-xs">
+                          <option value="todo">To do</option>
+                          <option value="in_progress">In progress</option>
+                          <option value="done">Done</option>
+                        </select>
+                        <button type="submit" className="text-xs text-accent underline">Update</button>
+                      </form>
+                    </td>
+                  </tr>
+                  <tr key={t.id + "-edit"}>
+                    <td colSpan={7} className="bg-black/[0.02] px-4 py-2">
+                      <details>
+                        <summary className="cursor-pointer text-xs text-accent underline">Edit</summary>
+                        <form action={updateTaskDetails} className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-6">
+                          <input type="hidden" name="task_id" value={t.id} />
+                          <input name="title" defaultValue={t.title} required className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm" />
+                          <input name="category" defaultValue={t.category || "General"} className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+                          <select name="assigned_contractor_id" defaultValue={t.assigned_contractor_id ?? ""} className="rounded-lg border border-black/15 px-3 py-2 text-sm">
+                            <option value="">Contractor...</option>
+                            {(contractors ?? []).map((c) => <option key={c.id} value={c.id}>{c.company_name}</option>)}
+                          </select>
+                          <input name="start_date" type="date" defaultValue={t.start_date ?? ""} className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+                          <input name="due_date" type="date" defaultValue={t.due_date ?? ""} className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+                          <select name="depends_on" multiple defaultValue={currentDeps} className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm md:col-span-2" size={Math.min(4, Math.max(2, dependencyOptions.length))}>
+                            {dependencyOptions.filter((o) => o.id !== t.id).map((o) => <option key={o.id} value={o.id}>Depends on: {o.label}</option>)}
+                          </select>
+                          <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Save changes</button>
+                        </form>
+                      </details>
+                    </td>
+                  </tr>
+                </>
               );
             })}
             {scheduleItems.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-black/40">No schedule items yet.</td></tr>}
