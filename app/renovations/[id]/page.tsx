@@ -3,24 +3,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import GanttChart, { GanttTaskInput } from "@/components/GanttChart";
+import LineItemsTable from "@/components/LineItemsTable";
 
 function money(n: number | null | undefined) {
   if (n === null || n === undefined) return "$0";
   return "$" + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
-
-// Same palette used on the schedule Gantt chart, so a category reads as the
-// same color everywhere in the app.
-const CATEGORY_PALETTE = [
-  "#2f6b4f", // accent green
-  "#b5651d", // clay
-  "#3a5a9b", // blue
-  "#8a3ab2", // purple
-  "#b23a5a", // rose
-  "#4a7a8a", // teal
-  "#8a7a3a", // olive
-  "#7a3a3a", // brick
-];
 
 export default async function RenovationDetailPage({ params }: { params: { id: string } }) {
   const supabase = createClient();
@@ -358,18 +346,6 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
   const overBudget = actualSpent > totalBudget;
   const contingencyUsed = Math.min(Math.max(actualSpent - totalBudget, 0), contingency);
 
-  const bidsByLineItem = new Map<string, any[]>();
-  (bids ?? []).forEach((b: any) => {
-    const arr = bidsByLineItem.get(b.line_item_id) ?? [];
-    arr.push(b);
-    bidsByLineItem.set(b.line_item_id, arr);
-  });
-
-  const lineItemCategories = Array.from(new Set((lineItems ?? []).map((li: any) => li.category)));
-  const colorByLineItemCategory = new Map(
-    lineItemCategories.map((c, i) => [c, CATEGORY_PALETTE[i % CATEGORY_PALETTE.length]])
-  );
-
   return (
     <div>
       <div className="mb-1 flex items-center gap-2 text-sm text-black/50">
@@ -440,110 +416,13 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
         <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Add expense</button>
       </form>
 
-      {lineItemCategories.length > 0 && (
-        <div className="mb-3 flex flex-wrap gap-3 pl-1">
-          {lineItemCategories.map((c) => (
-            <div key={c} className="flex items-center gap-1.5 text-xs text-black/60">
-              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorByLineItemCategory.get(c) }} />
-              {c}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="mb-8 table-shell">
-        <table>
-          <thead><tr><th>Date</th><th>Category</th><th>Vendor</th><th>Description</th><th>Budgeted</th><th>Amount</th><th>Payment method</th><th>Paid by</th><th>Notes</th><th></th></tr></thead>
-          <tbody>
-            {(lineItems ?? []).map((li: any) => {
-              const itemOver = Number(li.actual_amount) > Number(li.budgeted_amount) && Number(li.budgeted_amount) > 0;
-              const itemBids = bidsByLineItem.get(li.id) ?? [];
-              const catColor = colorByLineItemCategory.get(li.category) ?? "#64748b";
-              return (
-                <>
-                  <tr key={li.id} style={{ borderLeft: `3px solid ${catColor}` }}>
-                    <td>{li.expense_date ?? "—"}</td>
-                    <td>
-                      <span className="badge" style={{ backgroundColor: catColor + "1a", color: catColor }}>
-                        {li.category}
-                      </span>
-                    </td>
-                    <td>{li.vendor ?? "—"}</td>
-                    <td>{li.description ?? "—"}</td>
-                    <td>{li.budgeted_amount > 0 ? money(li.budgeted_amount) : "—"}</td>
-                    <td className={itemOver ? "font-medium text-red-700" : Number(li.actual_amount) < 0 ? "font-medium text-emerald-700" : ""}>{money(li.actual_amount)}</td>
-                    <td>{li.payment_method ?? "—"}</td>
-                    <td>{li.paid_by ?? "—"}</td>
-                    <td className="text-xs text-black/60">{li.notes ?? "—"}</td>
-                    <td></td>
-                  </tr>
-                  <tr key={li.id + "-edit"}>
-                    <td colSpan={10} className="bg-black/[0.02] px-4 py-2">
-                      <details>
-                        <summary className="cursor-pointer text-xs text-accent underline">Edit line item</summary>
-                        <form action={updateLineItemDetails} className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-6">
-                          <input type="hidden" name="line_item_id" value={li.id} />
-                          <input name="expense_date" type="date" defaultValue={li.expense_date ?? ""} className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-                          <input name="category" defaultValue={li.category} required className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-                          <input name="vendor" defaultValue={li.vendor ?? ""} placeholder="Vendor" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-                          <input name="description" defaultValue={li.description ?? ""} placeholder="Description" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-                          <input name="budgeted_amount" type="number" defaultValue={li.budgeted_amount ?? ""} placeholder="Budgeted $" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-                          <input name="actual_amount" type="number" defaultValue={li.actual_amount ?? ""} placeholder="Amount $" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-                          <input name="payment_method" defaultValue={li.payment_method ?? ""} placeholder="Payment method" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-                          <input name="paid_by" defaultValue={li.paid_by ?? ""} placeholder="Paid by" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-                          <select name="contractor_id" defaultValue={li.contractor_id ?? ""} className="rounded-lg border border-black/15 px-3 py-2 text-sm">
-                            <option value="">Contractor (optional)...</option>
-                            {(contractors ?? []).map((c) => <option key={c.id} value={c.id}>{c.company_name}</option>)}
-                          </select>
-                          <select name="status" defaultValue={li.status} className="rounded-lg border border-black/15 px-3 py-2 text-sm">
-                            <option value="not_started">Not started</option>
-                            <option value="in_progress">In progress</option>
-                            <option value="complete">Complete</option>
-                          </select>
-                          <input name="notes" defaultValue={li.notes ?? ""} placeholder="Notes" className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm" />
-                          <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Save changes</button>
-                        </form>
-                      </details>
-                    </td>
-                  </tr>
-                  {itemBids.length > 0 && (
-                    <tr key={li.id + "-bids"}>
-                      <td colSpan={10} className="bg-black/[0.02] px-4 py-2">
-                        <div className="mb-1 text-xs font-medium text-black/50">Bids for {li.category}</div>
-                        <div className="flex flex-wrap gap-2">
-                          {itemBids.map((b: any) => (
-                            <div key={b.id} className="flex items-center gap-2 rounded-lg border border-black/10 bg-white px-3 py-1.5 text-xs">
-                              <span>{b.contractors?.company_name}: {money(b.amount)}</span>
-                              <span className="badge bg-black/5">{b.status}</span>
-                              {b.status === "pending" && (
-                                <form action={acceptBid}>
-                                  <input type="hidden" name="bid_id" value={b.id} />
-                                  <input type="hidden" name="line_item_id" value={li.id} />
-                                  <input type="hidden" name="contractor_id" value={b.contractor_id} />
-                                  <input type="hidden" name="amount" value={b.amount} />
-                                  <button type="submit" className="text-accent underline">Accept</button>
-                                </form>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </>
-              );
-            })}
-            {(!lineItems || lineItems.length === 0) && <tr><td colSpan={10} className="py-6 text-center text-black/40">No line items yet.</td></tr>}
-            {lineItems && lineItems.length > 0 && (
-              <tr className="border-t-2 border-black/20 font-semibold">
-                <td colSpan={5} className="text-right">Total expenses</td>
-                <td>{money(actualSpent)}</td>
-                <td colSpan={4}></td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <LineItemsTable
+        lineItems={(lineItems ?? []) as any}
+        contractors={(contractors ?? []) as any}
+        bids={(bids ?? []) as any}
+        updateLineItemDetails={updateLineItemDetails}
+        acceptBid={acceptBid}
+      />
 
       <h3 className="mb-2 text-sm font-medium text-black/70">Add a bid to a line item</h3>
       <form action={addBid} className="mb-8 grid grid-cols-2 gap-3 rounded-xl border border-black/10 bg-white p-5 md:grid-cols-5">
