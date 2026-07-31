@@ -161,6 +161,7 @@ create table renovation_tasks (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references renovation_projects(id) on delete cascade,
   title text not null,
+  category text not null default 'General', -- groups tasks on the schedule/Gantt view
   assigned_contractor_id uuid references contractors(id),
   start_date date,
   due_date date,
@@ -168,6 +169,18 @@ create table renovation_tasks (
     check (status in ('todo', 'in_progress', 'done')),
   notes text,
   created_at timestamptz not null default now()
+);
+
+-- task_id can't start until depends_on_task_id is done; a task may depend on
+-- more than one predecessor. Used to draw dependency arrows and flag
+-- out-of-order scheduling on the Gantt chart.
+create table task_dependencies (
+  id uuid primary key default gen_random_uuid(),
+  task_id uuid not null references renovation_tasks(id) on delete cascade,
+  depends_on_task_id uuid not null references renovation_tasks(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  check (task_id <> depends_on_task_id),
+  unique (task_id, depends_on_task_id)
 );
 
 -- Multiple contractor quotes per line item, so bids can be compared before
@@ -375,6 +388,7 @@ alter table contractors enable row level security;
 alter table renovation_projects enable row level security;
 alter table renovation_line_items enable row level security;
 alter table renovation_tasks enable row level security;
+alter table task_dependencies enable row level security;
 alter table renovation_bids enable row level security;
 alter table change_orders enable row level security;
 alter table permits enable row level security;
@@ -435,6 +449,16 @@ create policy "reno_tasks_scoped" on renovation_tasks for all using (
   exists (
     select 1 from renovation_projects rp
     where rp.id = renovation_tasks.project_id
+      and has_property_scope(rp.property_id, array['renovation'])
+  )
+);
+
+create policy "task_dependencies_owner_all" on task_dependencies for all using (current_role_is_owner());
+create policy "task_dependencies_scoped" on task_dependencies for all using (
+  exists (
+    select 1 from renovation_tasks t
+    join renovation_projects rp on rp.id = t.project_id
+    where t.id = task_dependencies.task_id
       and has_property_scope(rp.property_id, array['renovation'])
   )
 );

@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import GanttChart, { GanttTaskInput } from "@/components/GanttChart";
 
 function money(n: number | null | undefined) {
   if (n === null || n === undefined) return "$0";
@@ -84,14 +85,25 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
   async function addTask(formData: FormData) {
     "use server";
     const supabase = createClient();
-    await supabase.from("renovation_tasks").insert({
-      project_id: projectId,
-      title: formData.get("title"),
-      assigned_contractor_id: formData.get("assigned_contractor_id") || null,
-      start_date: formData.get("start_date") || null,
-      due_date: formData.get("due_date") || null,
-      notes: formData.get("notes") || null,
-    });
+    const dependsOn = (formData.getAll("depends_on") as string[]).filter(Boolean);
+    const { data: newTask } = await supabase
+      .from("renovation_tasks")
+      .insert({
+        project_id: projectId,
+        title: formData.get("title"),
+        category: formData.get("category") || "General",
+        assigned_contractor_id: formData.get("assigned_contractor_id") || null,
+        start_date: formData.get("start_date") || null,
+        due_date: formData.get("due_date") || null,
+        notes: formData.get("notes") || null,
+      })
+      .select("id")
+      .single();
+    if (newTask && dependsOn.length > 0) {
+      await supabase.from("task_dependencies").insert(
+        dependsOn.map((depId) => ({ task_id: newTask.id, depends_on_task_id: depId }))
+      );
+    }
     revalidatePath(`/renovations/${projectId}`);
   }
 
@@ -182,6 +194,53 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
   ]);
 
   if (!project) notFound();
+
+  const taskIds = (tasks ?? []).map((t: any) => t.id);
+  const { data: taskDependencies } =
+    taskIds.length > 0
+      ? await supabase.from("task_dependencies").select("*").in("task_id", taskIds)
+      : { data: [] as any[] };
+
+  const depsByTask = new Map<string, string[]>();
+  (taskDependencies ?? []).forEach((d: any) => {
+    const arr = depsByTask.get(d.task_id) ?? [];
+    arr.push(d.depends_on_task_id);
+    depsByTask.set(d.task_id, arr);
+  });
+
+  const taskById = new Map((tasks ?? []).map((t: any) => [t.id, t]));
+  const schedulableIds = new Set(
+    (tasks ?? []).filter((t: any) => t.start_date && t.due_date).map((t: any) => t.id)
+  );
+  const statusToProgress: Record<string, number> = { todo: 0, in_progress: 50, done: 100 };
+
+  const ganttTasks: GanttTaskInput[] = (tasks ?? [])
+    .filter((t: any) => schedulableIds.has(t.id))
+    .map((t: any) => ({
+      id: t.id,
+      name: t.title,
+      start: t.start_date,
+      end: t.due_date,
+      progress: statusToProgress[t.status] ?? 0,
+      dependencies: (depsByTask.get(t.id) ?? []).filter((depId) => schedulableIds.has(depId)).join(","),
+      category: t.category || "General",
+    }));
+
+  const scheduleViolations: { taskTitle: string; dependsOnTitle: string; taskStart: string; depDue: string }[] = [];
+  (tasks ?? []).forEach((t: any) => {
+    if (!t.start_date) return;
+    (depsByTask.get(t.id) ?? []).forEach((depId: string) => {
+      const dep = taskById.get(depId);
+      if (dep?.due_date && t.start_date < dep.due_date) {
+        scheduleViolations.push({
+          taskTitle: t.title,
+          dependsOnTitle: dep.title,
+          taskStart: t.start_date,
+          depDue: dep.due_date,
+        });
+      }
+    });
+  });
 
   const originalBudget = Number(project.budget_total ?? 0);
   const contingency = Number(project.contingency_amount ?? 0);
@@ -369,40 +428,67 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
       <h2 className="mb-2 text-lg font-medium">Punch list / tasks</h2>
       <form action={addTask} className="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-black/10 bg-white p-5 md:grid-cols-6">
         <input name="title" placeholder="Task" required className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <input name="category" placeholder="Category (e.g. Kitchen)" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
         <select name="assigned_contractor_id" className="rounded-lg border border-black/15 px-3 py-2 text-sm">
           <option value="">Contractor...</option>
           {(contractors ?? []).map((c) => <option key={c.id} value={c.id}>{c.company_name}</option>)}
         </select>
         <input name="start_date" type="date" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
         <input name="due_date" type="date" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <select name="depends_on" multiple className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm md:col-span-2" size={Math.min(4, Math.max(2, (tasks ?? []).length))}>
+          {(tasks ?? []).map((t: any) => <option key={t.id} value={t.id}>Depends on: {t.title}</option>)}
+        </select>
         <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Add task</button>
       </form>
       <div className="mb-8 table-shell">
         <table>
-          <thead><tr><th>Task</th><th>Contractor</th><th>Start</th><th>Due</th><th>Status</th></tr></thead>
+          <thead><tr><th>Task</th><th>Category</th><th>Contractor</th><th>Start</th><th>Due</th><th>Depends on</th><th>Status</th></tr></thead>
           <tbody>
-            {(tasks ?? []).map((t: any) => (
-              <tr key={t.id}>
-                <td>{t.title}</td>
-                <td>{t.contractors?.company_name ?? "—"}</td>
-                <td>{t.start_date ?? "—"}</td>
-                <td>{t.due_date ?? "—"}</td>
-                <td>
-                  <form action={updateTaskStatus} className="flex items-center gap-2">
-                    <input type="hidden" name="task_id" value={t.id} />
-                    <select name="status" defaultValue={t.status} className="rounded-lg border border-black/15 px-2 py-1 text-xs">
-                      <option value="todo">To do</option>
-                      <option value="in_progress">In progress</option>
-                      <option value="done">Done</option>
-                    </select>
-                    <button type="submit" className="text-xs text-accent underline">Update</button>
-                  </form>
-                </td>
-              </tr>
-            ))}
-            {(!tasks || tasks.length === 0) && <tr><td colSpan={5} className="py-6 text-center text-black/40">No tasks yet.</td></tr>}
+            {(tasks ?? []).map((t: any) => {
+              const deps = (depsByTask.get(t.id) ?? []).map((depId) => taskById.get(depId)?.title).filter(Boolean);
+              return (
+                <tr key={t.id}>
+                  <td>{t.title}</td>
+                  <td><span className="badge bg-black/5">{t.category || "General"}</span></td>
+                  <td>{t.contractors?.company_name ?? "—"}</td>
+                  <td>{t.start_date ?? "—"}</td>
+                  <td>{t.due_date ?? "—"}</td>
+                  <td className="text-xs text-black/50">{deps.length > 0 ? deps.join(", ") : "—"}</td>
+                  <td>
+                    <form action={updateTaskStatus} className="flex items-center gap-2">
+                      <input type="hidden" name="task_id" value={t.id} />
+                      <select name="status" defaultValue={t.status} className="rounded-lg border border-black/15 px-2 py-1 text-xs">
+                        <option value="todo">To do</option>
+                        <option value="in_progress">In progress</option>
+                        <option value="done">Done</option>
+                      </select>
+                      <button type="submit" className="text-xs text-accent underline">Update</button>
+                    </form>
+                  </td>
+                </tr>
+              );
+            })}
+            {(!tasks || tasks.length === 0) && <tr><td colSpan={7} className="py-6 text-center text-black/40">No tasks yet.</td></tr>}
           </tbody>
         </table>
+      </div>
+
+      {/* SCHEDULE / GANTT */}
+      <h2 className="mb-2 text-lg font-medium">Project schedule</h2>
+      {scheduleViolations.length > 0 && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          <div className="mb-1 font-medium">Scheduling conflicts detected</div>
+          <ul className="list-inside list-disc space-y-0.5">
+            {scheduleViolations.map((v, i) => (
+              <li key={i}>
+                "{v.taskTitle}" starts {v.taskStart}, before its dependency "{v.dependsOnTitle}" finishes ({v.depDue}).
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="mb-8">
+        <GanttChart projectId={projectId} tasks={ganttTasks} />
       </div>
 
       {/* PERMITS */}
