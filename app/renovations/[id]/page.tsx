@@ -92,6 +92,7 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
         project_id: projectId,
         title: formData.get("title"),
         category: formData.get("category") || "General",
+        item_type: "task",
         assigned_contractor_id: formData.get("assigned_contractor_id") || null,
         start_date: formData.get("start_date") || null,
         due_date: formData.get("due_date") || null,
@@ -102,6 +103,32 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
     if (newTask && dependsOn.length > 0) {
       await supabase.from("task_dependencies").insert(
         dependsOn.map((depId) => ({ task_id: newTask.id, depends_on_task_id: depId }))
+      );
+    }
+    revalidatePath(`/renovations/${projectId}`);
+  }
+
+  async function addScheduleItem(formData: FormData) {
+    "use server";
+    const supabase = createClient();
+    const dependsOn = (formData.getAll("depends_on") as string[]).filter(Boolean);
+    const { data: newItem } = await supabase
+      .from("renovation_tasks")
+      .insert({
+        project_id: projectId,
+        title: formData.get("title"),
+        category: formData.get("category") || "General",
+        item_type: "schedule_item",
+        assigned_contractor_id: formData.get("assigned_contractor_id") || null,
+        start_date: formData.get("start_date") || null,
+        due_date: formData.get("due_date") || null,
+        notes: formData.get("notes") || null,
+      })
+      .select("id")
+      .single();
+    if (newItem && dependsOn.length > 0) {
+      await supabase.from("task_dependencies").insert(
+        dependsOn.map((depId) => ({ task_id: newItem.id, depends_on_task_id: depId }))
       );
     }
     revalidatePath(`/renovations/${projectId}`);
@@ -214,6 +241,16 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
   );
   const statusToProgress: Record<string, number> = { todo: 0, in_progress: 50, done: 100 };
 
+  const punchListTasks = (tasks ?? []).filter((t: any) => t.item_type !== "schedule_item");
+  const scheduleItems = (tasks ?? []).filter((t: any) => t.item_type === "schedule_item");
+
+  // Used to populate "depends on" pickers on both the punch list and the
+  // schedule item forms — a task can depend on a schedule item and vice versa.
+  const dependencyOptions = (tasks ?? []).map((t: any) => ({
+    id: t.id,
+    label: `${t.item_type === "schedule_item" ? "[Schedule]" : "[Task]"} ${t.title}`,
+  }));
+
   const ganttTasks: GanttTaskInput[] = (tasks ?? [])
     .filter((t: any) => schedulableIds.has(t.id))
     .map((t: any) => ({
@@ -224,6 +261,7 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
       progress: statusToProgress[t.status] ?? 0,
       dependencies: (depsByTask.get(t.id) ?? []).filter((depId) => schedulableIds.has(depId)).join(","),
       category: t.category || "General",
+      itemType: t.item_type === "schedule_item" ? "schedule_item" : "task",
     }));
 
   const scheduleViolations: { taskTitle: string; dependsOnTitle: string; taskStart: string; depDue: string }[] = [];
@@ -435,8 +473,8 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
         </select>
         <input name="start_date" type="date" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
         <input name="due_date" type="date" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
-        <select name="depends_on" multiple className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm md:col-span-2" size={Math.min(4, Math.max(2, (tasks ?? []).length))}>
-          {(tasks ?? []).map((t: any) => <option key={t.id} value={t.id}>Depends on: {t.title}</option>)}
+        <select name="depends_on" multiple className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm md:col-span-2" size={Math.min(4, Math.max(2, dependencyOptions.length))}>
+          {dependencyOptions.map((o) => <option key={o.id} value={o.id}>Depends on: {o.label}</option>)}
         </select>
         <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Add task</button>
       </form>
@@ -444,7 +482,7 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
         <table>
           <thead><tr><th>Task</th><th>Category</th><th>Contractor</th><th>Start</th><th>Due</th><th>Depends on</th><th>Status</th></tr></thead>
           <tbody>
-            {(tasks ?? []).map((t: any) => {
+            {punchListTasks.map((t: any) => {
               const deps = (depsByTask.get(t.id) ?? []).map((depId) => taskById.get(depId)?.title).filter(Boolean);
               return (
                 <tr key={t.id}>
@@ -468,13 +506,62 @@ export default async function RenovationDetailPage({ params }: { params: { id: s
                 </tr>
               );
             })}
-            {(!tasks || tasks.length === 0) && <tr><td colSpan={7} className="py-6 text-center text-black/40">No tasks yet.</td></tr>}
+            {punchListTasks.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-black/40">No tasks yet.</td></tr>}
           </tbody>
         </table>
       </div>
 
       {/* SCHEDULE / GANTT */}
       <h2 className="mb-2 text-lg font-medium">Project schedule</h2>
+
+      <h3 className="mb-2 text-sm font-medium text-black/70">Add a construction / schedule item</h3>
+      <form action={addScheduleItem} className="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-black/10 bg-white p-5 md:grid-cols-6">
+        <input name="title" placeholder="Item (e.g. Framing, Drywall)" required className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <input name="category" placeholder="Category (e.g. Kitchen)" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <select name="assigned_contractor_id" className="rounded-lg border border-black/15 px-3 py-2 text-sm">
+          <option value="">Contractor...</option>
+          {(contractors ?? []).map((c) => <option key={c.id} value={c.id}>{c.company_name}</option>)}
+        </select>
+        <input name="start_date" type="date" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <input name="due_date" type="date" className="rounded-lg border border-black/15 px-3 py-2 text-sm" />
+        <select name="depends_on" multiple className="col-span-2 rounded-lg border border-black/15 px-3 py-2 text-sm md:col-span-2" size={Math.min(4, Math.max(2, dependencyOptions.length))}>
+          {dependencyOptions.map((o) => <option key={o.id} value={o.id}>Depends on: {o.label}</option>)}
+        </select>
+        <button type="submit" className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white">Add schedule item</button>
+      </form>
+      <div className="mb-8 table-shell">
+        <table>
+          <thead><tr><th>Item</th><th>Category</th><th>Contractor</th><th>Start</th><th>Due</th><th>Depends on</th><th>Status</th></tr></thead>
+          <tbody>
+            {scheduleItems.map((t: any) => {
+              const deps = (depsByTask.get(t.id) ?? []).map((depId) => taskById.get(depId)?.title).filter(Boolean);
+              return (
+                <tr key={t.id}>
+                  <td>{t.title}</td>
+                  <td><span className="badge bg-black/5">{t.category || "General"}</span></td>
+                  <td>{t.contractors?.company_name ?? "—"}</td>
+                  <td>{t.start_date ?? "—"}</td>
+                  <td>{t.due_date ?? "—"}</td>
+                  <td className="text-xs text-black/50">{deps.length > 0 ? deps.join(", ") : "—"}</td>
+                  <td>
+                    <form action={updateTaskStatus} className="flex items-center gap-2">
+                      <input type="hidden" name="task_id" value={t.id} />
+                      <select name="status" defaultValue={t.status} className="rounded-lg border border-black/15 px-2 py-1 text-xs">
+                        <option value="todo">To do</option>
+                        <option value="in_progress">In progress</option>
+                        <option value="done">Done</option>
+                      </select>
+                      <button type="submit" className="text-xs text-accent underline">Update</button>
+                    </form>
+                  </td>
+                </tr>
+              );
+            })}
+            {scheduleItems.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-black/40">No schedule items yet.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
       {scheduleViolations.length > 0 && (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
           <div className="mb-1 font-medium">Scheduling conflicts detected</div>

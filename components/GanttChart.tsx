@@ -14,6 +14,7 @@ export interface GanttTaskInput {
   progress: number;
   dependencies: string; // comma-separated task ids, only ones also present on the chart
   category: string;
+  itemType: "task" | "schedule_item"; // 'task' = punch list item, 'schedule_item' = construction/schedule phase
 }
 
 const PALETTE = [
@@ -27,6 +28,11 @@ const PALETTE = [
   "#7a3a3a", // brick
 ];
 
+// Punch list tasks always render in this neutral slate color, regardless of
+// category, so they read visually distinct from construction/schedule items.
+const TASK_COLOR = "#64748b";
+const TASK_CLASS = "type-task";
+
 function slug(s: string) {
   return "cat-" + s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 }
@@ -35,7 +41,10 @@ export default function GanttChart({ projectId, tasks }: { projectId: string; ta
   const containerRef = useRef<HTMLDivElement>(null);
   const ganttRef = useRef<any>(null);
 
-  const categories = Array.from(new Set(tasks.map((t) => t.category)));
+  // Category colors only apply to schedule items — punch list tasks get
+  // their own fixed color (see TASK_COLOR) so the two kinds of item are
+  // visually distinguishable at a glance.
+  const categories = Array.from(new Set(tasks.filter((t) => t.itemType === "schedule_item").map((t) => t.category)));
   const colorByCategory = new Map(categories.map((c, i) => [c, PALETTE[i % PALETTE.length]]));
 
   useEffect(() => {
@@ -44,7 +53,7 @@ export default function GanttChart({ projectId, tasks }: { projectId: string; ta
 
     const ganttTasks = tasks.map((t) => ({
       ...t,
-      custom_class: slug(t.category),
+      custom_class: t.itemType === "task" ? TASK_CLASS : slug(t.category),
     }));
 
     ganttRef.current = new Gantt(containerRef.current, ganttTasks, {
@@ -61,20 +70,32 @@ export default function GanttChart({ projectId, tasks }: { projectId: string; ta
   if (tasks.length === 0) {
     return (
       <div className="rounded-xl border border-black/10 bg-white p-6 text-center text-sm text-black/40">
-        No tasks have both a start and due date yet — add dates in the punch list above to see them here.
+        No tasks or schedule items have both a start and due date yet — add dates above to see them here.
       </div>
     );
   }
 
   return (
     <div className="rounded-xl border border-black/10 bg-white p-4">
-      <style>{categories
-        .map(
-          (c) => `.bar-wrapper.${slug(c)} .bar { fill: ${colorByCategory.get(c)}22; stroke: ${colorByCategory.get(c)}; }
+      <style>
+        {`.bar-wrapper.${TASK_CLASS} .bar { fill: ${TASK_COLOR}22; stroke: ${TASK_COLOR}; stroke-dasharray: 3,2; }
+.bar-wrapper.${TASK_CLASS} .bar-progress { fill: ${TASK_COLOR}; }
+` +
+          categories
+            .map(
+              (c) => `.bar-wrapper.${slug(c)} .bar { fill: ${colorByCategory.get(c)}22; stroke: ${colorByCategory.get(c)}; }
 .bar-wrapper.${slug(c)} .bar-progress { fill: ${colorByCategory.get(c)}; }`
-        )
-        .join("\n")}</style>
+            )
+            .join("\n")}
+      </style>
       <div className="mb-3 flex flex-wrap gap-3">
+        <div className="flex items-center gap-1.5 text-xs text-black/60">
+          <span
+            className="inline-block h-2.5 w-2.5 rounded-full border border-dashed"
+            style={{ borderColor: TASK_COLOR, backgroundColor: TASK_COLOR + "22" }}
+          />
+          Punch list tasks
+        </div>
         {categories.map((c) => (
           <div key={c} className="flex items-center gap-1.5 text-xs text-black/60">
             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colorByCategory.get(c) }} />

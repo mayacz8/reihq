@@ -161,7 +161,9 @@ create table renovation_tasks (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references renovation_projects(id) on delete cascade,
   title text not null,
-  category text not null default 'General', -- groups tasks on the schedule/Gantt view
+  category text not null default 'General', -- groups items on the schedule/Gantt view
+  item_type text not null default 'task'
+    check (item_type in ('task', 'schedule_item')), -- 'task' = punch list item, 'schedule_item' = construction/schedule phase
   assigned_contractor_id uuid references contractors(id),
   start_date date,
   due_date date,
