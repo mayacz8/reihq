@@ -118,6 +118,12 @@ create table contractors (
   phone text,
   email text,
   trade text, -- e.g. electrical, plumbing, general, roofing
+  license_number text,
+  insurance_verified boolean not null default false,
+  insurance_expiry date,
+  rating integer check (rating between 1 and 5),
+  is_preferred boolean not null default false,
+  reliability_notes text,
   notes text,
   created_at timestamptz not null default now()
 );
@@ -130,6 +136,7 @@ create table renovation_projects (
   name text not null,
   status project_status not null default 'planning',
   budget_total numeric(12,2),
+  contingency_amount numeric(12,2) not null default 0,
   start_date date,
   target_end_date date,
   actual_end_date date,
@@ -155,9 +162,108 @@ create table renovation_tasks (
   project_id uuid not null references renovation_projects(id) on delete cascade,
   title text not null,
   assigned_contractor_id uuid references contractors(id),
+  start_date date,
   due_date date,
   status text not null default 'todo'
     check (status in ('todo', 'in_progress', 'done')),
+  notes text,
+  created_at timestamptz not null default now()
+);
+
+-- Multiple contractor quotes per line item, so bids can be compared before
+-- picking one.
+create table renovation_bids (
+  id uuid primary key default gen_random_uuid(),
+  line_item_id uuid not null references renovation_line_items(id) on delete cascade,
+  contractor_id uuid not null references contractors(id),
+  amount numeric(12,2) not null,
+  submitted_date date not null default current_date,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'rejected')),
+  notes text,
+  created_at timestamptz not null default now()
+);
+
+-- Scope/cost changes tracked separately from the original budget.
+create table change_orders (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references renovation_projects(id) on delete cascade,
+  line_item_id uuid references renovation_line_items(id) on delete set null,
+  description text not null,
+  cost_delta numeric(12,2) not null,
+  status text not null default 'proposed' check (status in ('proposed', 'approved', 'rejected')),
+  requested_date date not null default current_date,
+  approved_date date,
+  notes text,
+  created_at timestamptz not null default now()
+);
+
+create table permits (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references renovation_projects(id) on delete cascade,
+  permit_type text not null,
+  permit_number text,
+  status text not null default 'not_applied'
+    check (status in ('not_applied', 'applied', 'issued', 'inspection_scheduled', 'passed', 'failed', 'closed')),
+  applied_date date,
+  issued_date date,
+  inspection_date date,
+  inspection_result text,
+  notes text,
+  created_at timestamptz not null default now()
+);
+
+-- Design/finish selection sheet: what paint, flooring, countertops, fixtures,
+-- etc. were chosen per room, for reference or replication later.
+create table finish_selections (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references renovation_projects(id) on delete cascade,
+  room text,
+  category text not null,
+  item_name text not null,
+  brand text,
+  color_finish text,
+  sku_model text,
+  vendor text,
+  cost numeric(12,2),
+  quantity numeric(10,2),
+  status text not null default 'selected'
+    check (status in ('considering', 'selected', 'ordered', 'installed')),
+  spec_url text,
+  notes text,
+  created_at timestamptz not null default now()
+);
+
+-- Photos, invoices, permit docs, etc. Files live in Supabase Storage; this
+-- table indexes them against a project/line item/task/permit/finish.
+create table renovation_documents (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references renovation_projects(id) on delete cascade,
+  line_item_id uuid references renovation_line_items(id) on delete set null,
+  task_id uuid references renovation_tasks(id) on delete set null,
+  permit_id uuid references permits(id) on delete set null,
+  finish_selection_id uuid references finish_selections(id) on delete set null,
+  doc_type text not null default 'photo' check (doc_type in ('photo', 'invoice', 'permit', 'inspection', 'other')),
+  file_url text not null,
+  file_name text,
+  caption text,
+  created_by uuid references profiles(id),
+  created_at timestamptz not null default now()
+);
+
+-- Furniture/FF&E cost for properties rented out furnished, tracked separately
+-- from the renovation budget.
+create table furnishings (
+  id uuid primary key default gen_random_uuid(),
+  property_id uuid not null references properties(id) on delete cascade,
+  item_name text not null,
+  vendor text,
+  category text not null default 'package'
+    check (category in ('package', 'furniture', 'appliance', 'decor', 'electronics', 'other')),
+  cost numeric(12,2) not null,
+  purchase_date date not null default current_date,
+  warranty_expiry date,
+  condition text not null default 'new'
+    check (condition in ('new', 'good', 'fair', 'needs_replacement')),
   notes text,
   created_at timestamptz not null default now()
 );
@@ -269,6 +375,12 @@ alter table contractors enable row level security;
 alter table renovation_projects enable row level security;
 alter table renovation_line_items enable row level security;
 alter table renovation_tasks enable row level security;
+alter table renovation_bids enable row level security;
+alter table change_orders enable row level security;
+alter table permits enable row level security;
+alter table finish_selections enable row level security;
+alter table renovation_documents enable row level security;
+alter table furnishings enable row level security;
 alter table tenants enable row level security;
 alter table leases enable row level security;
 alter table rent_payments enable row level security;
@@ -327,6 +439,57 @@ create policy "reno_tasks_scoped" on renovation_tasks for all using (
   )
 );
 
+create policy "bids_owner_all" on renovation_bids for all using (current_role_is_owner());
+create policy "bids_scoped" on renovation_bids for all using (
+  exists (
+    select 1 from renovation_line_items li
+    join renovation_projects rp on rp.id = li.project_id
+    where li.id = renovation_bids.line_item_id
+      and has_property_scope(rp.property_id, array['renovation'])
+  )
+);
+
+create policy "change_orders_owner_all" on change_orders for all using (current_role_is_owner());
+create policy "change_orders_scoped" on change_orders for all using (
+  exists (
+    select 1 from renovation_projects rp
+    where rp.id = change_orders.project_id
+      and has_property_scope(rp.property_id, array['renovation'])
+  )
+);
+
+create policy "permits_owner_all" on permits for all using (current_role_is_owner());
+create policy "permits_scoped" on permits for all using (
+  exists (
+    select 1 from renovation_projects rp
+    where rp.id = permits.project_id
+      and has_property_scope(rp.property_id, array['renovation'])
+  )
+);
+
+create policy "finish_selections_owner_all" on finish_selections for all using (current_role_is_owner());
+create policy "finish_selections_scoped" on finish_selections for all using (
+  exists (
+    select 1 from renovation_projects rp
+    where rp.id = finish_selections.project_id
+      and has_property_scope(rp.property_id, array['renovation'])
+  )
+);
+
+create policy "documents_owner_all" on renovation_documents for all using (current_role_is_owner());
+create policy "documents_scoped" on renovation_documents for all using (
+  exists (
+    select 1 from renovation_projects rp
+    where rp.id = renovation_documents.project_id
+      and has_property_scope(rp.property_id, array['renovation'])
+  )
+);
+
+create policy "furnishings_owner_all" on furnishings for all using (current_role_is_owner());
+create policy "furnishings_scoped" on furnishings for all using (
+  has_property_scope(property_id, array['renovation', 'financials'])
+);
+
 -- Tenants: owner + rentals scope
 create policy "tenants_owner_all" on tenants for all using (current_role_is_owner());
 create policy "tenants_read_all" on tenants for select using (true);
@@ -377,6 +540,18 @@ $$;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure handle_new_user();
+
+-- ============================================================
+-- 10. STORAGE (renovation photos, invoices, permits)
+-- ============================================================
+
+insert into storage.buckets (id, name, public)
+values ('renovation-docs', 'renovation-docs', true)
+on conflict (id) do nothing;
+
+create policy "renovation_docs_read" on storage.objects for select using (bucket_id = 'renovation-docs');
+create policy "renovation_docs_write" on storage.objects for insert with check (bucket_id = 'renovation-docs' and auth.role() = 'authenticated');
+create policy "renovation_docs_delete" on storage.objects for delete using (bucket_id = 'renovation-docs' and auth.role() = 'authenticated');
 
 -- After running this file, manually promote yourself to owner:
 -- update profiles set role = 'owner' where email = 'you@example.com';
